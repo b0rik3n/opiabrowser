@@ -2,14 +2,49 @@ const viewport = document.getElementById('viewport');
 const statusEl = document.getElementById('status');
 const titleEl = document.getElementById('title');
 const urlInput = document.getElementById('urlInput');
+const tabsEl = document.getElementById('tabs');
+const securityEl = document.getElementById('security');
 
 const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
 const token = localStorage.getItem('opiabrowser_api_key') || '';
 const wsUrl = `${wsProto}://${location.host}/ws/control${token ? `?token=${encodeURIComponent(token)}` : ''}`;
 const ws = new WebSocket(wsUrl);
 
+const tabs = new Map();
+let activeTabId = null;
+
 function send(type, data = {}) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, ...data }));
+}
+
+function renderTabs() {
+  tabsEl.innerHTML = '';
+  for (const [tabId, tab] of tabs.entries()) {
+    const el = document.createElement('div');
+    el.className = `tab ${tabId === activeTabId ? 'active' : ''}`;
+    el.innerHTML = `<span class="tabTitle">${tab.title || 'New Tab'}</span><button class="tabClose" title="Close tab">✕</button>`;
+    el.onclick = () => send('switchTab', { tabId });
+    el.querySelector('.tabClose').onclick = (e) => {
+      e.stopPropagation();
+      send('closeTab', { tabId });
+    };
+    tabsEl.appendChild(el);
+  }
+}
+
+function setSecurity(url) {
+  securityEl.className = 'security unknown';
+  securityEl.textContent = '○';
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'https:') {
+      securityEl.className = 'security secure';
+      securityEl.textContent = '🔒';
+    } else if (u.protocol === 'http:') {
+      securityEl.className = 'security insecure';
+      securityEl.textContent = '!';
+    }
+  } catch {}
 }
 
 ws.addEventListener('open', () => {
@@ -18,10 +53,25 @@ ws.addEventListener('open', () => {
 
 ws.addEventListener('message', (evt) => {
   const msg = JSON.parse(evt.data);
+
+  if (msg.type === 'tabs') {
+    tabs.clear();
+    for (const t of msg.tabs) tabs.set(t.tabId, t);
+    activeTabId = msg.activeTabId;
+    renderTabs();
+    const active = tabs.get(activeTabId);
+    if (active) {
+      titleEl.textContent = active.title || 'New Tab';
+      urlInput.value = active.url || urlInput.value;
+      setSecurity(active.url || '');
+    }
+  }
+
   if (msg.type === 'frame') {
     viewport.src = `data:image/png;base64,${msg.data}`;
     if (msg.url) urlInput.value = msg.url;
     if (msg.title) titleEl.textContent = msg.title;
+    setSecurity(msg.url || '');
   }
   if (msg.type === 'status') statusEl.textContent = msg.message;
   if (msg.type === 'error') statusEl.textContent = `error: ${msg.message}`;
@@ -35,6 +85,8 @@ document.getElementById('goBtn').addEventListener('click', () => send('navigate'
 document.getElementById('backBtn').addEventListener('click', () => send('back'));
 document.getElementById('forwardBtn').addEventListener('click', () => send('forward'));
 document.getElementById('refreshBtn').addEventListener('click', () => send('refresh'));
+document.getElementById('newTabBtn').addEventListener('click', () => send('newTab', { url: 'https://example.com' }));
+
 urlInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') send('navigate', { url: urlInput.value.trim() });
 });

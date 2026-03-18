@@ -9,12 +9,14 @@
 <body>
   <div class="window">
     <div class="tabbar">
-      <div class="tab active">New Tab</div>
+      <div id="tabs" class="tabs"></div>
+      <button id="newTabBtn" class="tabAdd" title="New tab">+</button>
     </div>
     <div class="toolbar">
       <button id="backBtn" title="Back">←</button>
       <button id="forwardBtn" title="Forward">→</button>
       <button id="refreshBtn" title="Refresh">↻</button>
+      <span id="security" class="security unknown" title="Connection security">○</span>
       <input id="urlInput" type="text" value="https://example.com" />
       <button id="goBtn">Go</button>
     </div>

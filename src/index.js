@@ -57,6 +57,7 @@ async function newSession() {
     bypassCSP: false,
     serviceWorkers: 'block'
   });
+
   const page = await context.newPage();
   await page.route('**/*', async route => {
     const reqUrl = route.request().url();
@@ -64,27 +65,87 @@ async function newSession() {
     if (!result.ok) return route.abort('blockedbyclient');
     return route.continue();
   });
+
   const id = uuidv4();
   const s = { id, context, page, createdAt: Date.now(), clients: new Set() };
   sessions.set(id, s);
   return s;
 }
 
-async function frameFor(session) {
-  const png = await session.page.screenshot({ type: 'png' });
-  return png.toString('base64');
+function markDirty(client) {
+  client.dirty = true;
+  if (!client.frameLoop) {
+    client.frameLoop = setInterval(() => flushFrame(client).catch(() => {}), 180);
+  }
 }
 
-async function broadcastFrame(session, message = 'ok') {
-  const data = await frameFor(session);
-  const payload = JSON.stringify({ type: 'frame', data, url: session.page.url(), title: await session.page.title() });
-  const status = JSON.stringify({ type: 'status', message });
-  for (const ws of session.clients) {
-    if (ws.readyState === ws.OPEN) {
-      ws.send(payload);
-      ws.send(status);
-    }
+async function flushFrame(client, force = false) {
+  if (!client.activeTabId) return;
+  const tab = client.tabs.get(client.activeTabId);
+  if (!tab) return;
+  if (!force && !client.dirty) return;
+  client.dirty = false;
+
+  const png = await tab.session.page.screenshot({ type: 'png' });
+  client.ws.send(JSON.stringify({
+    type: 'frame',
+    data: png.toString('base64'),
+    url: tab.session.page.url(),
+    title: await tab.session.page.title()
+  }));
+}
+
+function stopFrameLoop(client) {
+  if (client.frameLoop) clearInterval(client.frameLoop);
+  client.frameLoop = null;
+}
+
+async function sendTabs(client) {
+  const tabs = [];
+  for (const [tabId, tab] of client.tabs.entries()) {
+    tabs.push({
+      tabId,
+      title: (await tab.session.page.title()) || 'New Tab',
+      url: tab.session.page.url()
+    });
   }
+  client.ws.send(JSON.stringify({ type: 'tabs', tabs, activeTabId: client.activeTabId }));
+}
+
+async function createTab(client, url = 'https://example.com') {
+  const session = await newSession();
+  const tabId = uuidv4();
+  client.tabs.set(tabId, { tabId, session });
+  client.activeTabId = tabId;
+  await session.page.goto(url, { waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs });
+  await sendTabs(client);
+  markDirty(client);
+}
+
+async function closeTab(client, tabId) {
+  const tab = client.tabs.get(tabId);
+  if (!tab) return;
+  await tab.session.context.close().catch(() => {});
+  sessions.delete(tab.session.id);
+  client.tabs.delete(tabId);
+
+  if (client.activeTabId === tabId) {
+    client.activeTabId = client.tabs.keys().next().value || null;
+  }
+  if (!client.activeTabId && client.tabs.size === 0) {
+    await createTab(client, 'https://example.com');
+  } else {
+    await sendTabs(client);
+    markDirty(client);
+  }
+}
+
+async function withActiveTab(client, fn) {
+  const tab = client.tabs.get(client.activeTabId);
+  if (!tab) throw new Error('no_active_tab');
+  await fn(tab.session.page, tab.session);
+  await sendTabs(client);
+  markDirty(client);
 }
 
 app.get('/', (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
@@ -106,7 +167,6 @@ app.post('/session/:id/navigate', async (req, res) => {
   if (!check.ok) return res.status(400).json({ error: 'url_blocked', reason: check.reason });
   try {
     const response = await s.page.goto(req.body.url, { waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs });
-    await broadcastFrame(s, 'navigated');
     res.json({ ok: true, status: response?.status() ?? null, finalUrl: s.page.url() });
   } catch (e) {
     res.status(500).json({ error: 'navigate_failed', detail: e.message });
@@ -124,7 +184,7 @@ app.delete('/session/:id', async (req, res) => {
 async function cleanupExpired() {
   const now = Date.now();
   for (const [id, s] of sessions.entries()) {
-    if (now - s.createdAt > config.sessionTtlMs || s.clients.size === 0) {
+    if (now - s.createdAt > config.sessionTtlMs) {
       await s.context.close().catch(() => {});
       sessions.delete(id);
     }
@@ -132,29 +192,48 @@ async function cleanupExpired() {
 }
 setInterval(cleanupExpired, 30_000).unref();
 
-async function handleControl(ws, msg, session) {
+async function handleControl(client, msg) {
+  if (msg.type === 'newTab') return createTab(client, msg.url || 'https://example.com');
+  if (msg.type === 'switchTab') {
+    if (client.tabs.has(msg.tabId)) {
+      client.activeTabId = msg.tabId;
+      await sendTabs(client);
+      return markDirty(client);
+    }
+    return;
+  }
+  if (msg.type === 'closeTab') return closeTab(client, msg.tabId);
+
   if (msg.type === 'navigate') {
     const check = await validateUrl(msg.url, config);
     if (!check.ok) throw new Error(`url_blocked:${check.reason}`);
-    await session.page.goto(msg.url, { waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs });
-  } else if (msg.type === 'back') {
-    await session.page.goBack({ waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs }).catch(() => null);
-  } else if (msg.type === 'forward') {
-    await session.page.goForward({ waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs }).catch(() => null);
-  } else if (msg.type === 'refresh') {
-    await session.page.reload({ waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs });
-  } else if (msg.type === 'click') {
-    const p = scalePoint(msg.x, msg.y, msg.vw, msg.vh);
-    await session.page.mouse.click(p.x, p.y);
-  } else if (msg.type === 'scroll') {
-    await session.page.mouse.wheel(Number(msg.dx || 0), Number(msg.dy || 0));
-  } else if (msg.type === 'type') {
-    await session.page.keyboard.type(String(msg.text || ''));
-  } else if (msg.type === 'key') {
-    const k = String(msg.key || '');
-    const map = { Enter: 'Enter', Backspace: 'Backspace', Tab: 'Tab', Escape: 'Escape', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight' };
-    if (map[k]) await session.page.keyboard.press(map[k]);
   }
+
+  await withActiveTab(client, async (page) => {
+    if (msg.type === 'navigate') {
+      await page.goto(msg.url, { waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs });
+    } else if (msg.type === 'back') {
+      await page.goBack({ waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs }).catch(() => null);
+    } else if (msg.type === 'forward') {
+      await page.goForward({ waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs }).catch(() => null);
+    } else if (msg.type === 'refresh') {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs });
+    } else if (msg.type === 'click') {
+      const p = scalePoint(msg.x, msg.y, msg.vw, msg.vh);
+      await page.mouse.click(p.x, p.y);
+    } else if (msg.type === 'scroll') {
+      await page.mouse.wheel(Number(msg.dx || 0), Number(msg.dy || 0));
+    } else if (msg.type === 'type') {
+      await page.keyboard.type(String(msg.text || ''));
+    } else if (msg.type === 'key') {
+      const k = String(msg.key || '');
+      const map = {
+        Enter: 'Enter', Backspace: 'Backspace', Tab: 'Tab', Escape: 'Escape',
+        ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight'
+      };
+      if (map[k]) await page.keyboard.press(map[k]);
+    }
+  });
 }
 
 async function start() {
@@ -167,6 +246,7 @@ async function start() {
   const wss = new WebSocketServer({ server, path: '/ws/control' });
 
   wss.on('connection', async (ws, req) => {
+    const client = { ws, tabs: new Map(), activeTabId: null, dirty: false, frameLoop: null };
     try {
       if (config.apiKey) {
         const u = new URL(req.url, `http://${req.headers.host}`);
@@ -176,32 +256,31 @@ async function start() {
         }
       }
 
-      const session = await newSession();
-      session.clients.add(ws);
-      ws.send(JSON.stringify({ type: 'session', sessionId: session.id }));
-      await session.page.goto('https://example.com', { waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs });
-      await broadcastFrame(session, 'ready');
+      await createTab(client, 'https://example.com');
+      ws.send(JSON.stringify({ type: 'status', message: 'ready' }));
 
       ws.on('message', async (raw) => {
         try {
           const msg = JSON.parse(raw.toString());
-          await handleControl(ws, msg, session);
-          await broadcastFrame(session, 'updated');
+          await handleControl(client, msg);
+          ws.send(JSON.stringify({ type: 'status', message: 'updated' }));
         } catch (e) {
           ws.send(JSON.stringify({ type: 'error', message: e.message }));
         }
       });
 
       ws.on('close', async () => {
-        session.clients.delete(ws);
-        if (session.clients.size === 0) {
-          await session.context.close().catch(() => {});
-          sessions.delete(session.id);
+        stopFrameLoop(client);
+        for (const tab of client.tabs.values()) {
+          await tab.session.context.close().catch(() => {});
+          sessions.delete(tab.session.id);
         }
+        client.tabs.clear();
       });
     } catch (e) {
       ws.send(JSON.stringify({ type: 'error', message: e.message }));
       ws.close();
+      stopFrameLoop(client);
     }
   });
 
