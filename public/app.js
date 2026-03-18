@@ -6,12 +6,19 @@ const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
 const token = localStorage.getItem('opiabrowser_api_key') || '';
 const wsUrl = `${wsProto}://${location.host}/ws/browser${token ? `?token=${encodeURIComponent(token)}` : ''}`;
 const ws = new WebSocket(wsUrl);
+const manualOnlyEl = document.getElementById('manualOnly');
+manualOnlyEl.checked = (localStorage.getItem('opiabrowser_manual_only') ?? '1') === '1';
 
 function send(type, data = {}) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, ...data }));
 }
 
-ws.addEventListener('open', () => { statusEl.textContent = 'connected'; });
+function sendInputMode() {
+  localStorage.setItem('opiabrowser_manual_only', manualOnlyEl.checked ? '1' : '0');
+  send('setInputMode', { manualOnly: manualOnlyEl.checked });
+}
+
+ws.addEventListener('open', () => { statusEl.textContent = 'connected'; sendInputMode(); });
 ws.addEventListener('close', () => { statusEl.textContent = 'disconnected'; });
 
 ws.addEventListener('message', (evt) => {
@@ -30,6 +37,7 @@ document.getElementById('goBtn').addEventListener('click', () => send('navigate'
 document.getElementById('backBtn').addEventListener('click', () => send('back'));
 document.getElementById('forwardBtn').addEventListener('click', () => send('forward'));
 document.getElementById('refreshBtn').addEventListener('click', () => send('refresh'));
+manualOnlyEl.addEventListener('change', sendInputMode);
 urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') send('navigate', { url: urlInput.value.trim() }); });
 
 viewport.addEventListener('click', (e) => {

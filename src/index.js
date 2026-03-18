@@ -85,7 +85,7 @@ async function start() {
   const wss = new WebSocketServer({ server, path: '/ws/browser' });
 
   wss.on('connection', async (ws, req) => {
-    const state = { ws, context: null, page: null, frameLoop: null, dirty: false };
+    const state = { ws, context: null, page: null, frameLoop: null, dirty: false, manualOnly: true, lastActionAt: 0 };
 
     try {
       if (config.apiKey) {
@@ -126,6 +126,21 @@ async function start() {
       ws.on('message', async (raw) => {
         try {
           const msg = JSON.parse(raw.toString());
+
+          if (msg.type === 'setInputMode') {
+            state.manualOnly = Boolean(msg.manualOnly);
+            ws.send(JSON.stringify({ type: 'status', message: `input=${state.manualOnly ? 'manual-only' : 'normal'}` }));
+            return;
+          }
+
+          // Manual-only: throttle event bursts and reduce bot-like cadence.
+          const now = Date.now();
+          const minGap = state.manualOnly ? 140 : 0;
+          if (now - state.lastActionAt < minGap) {
+            ws.send(JSON.stringify({ type: 'status', message: 'slow down a bit...' }));
+            return;
+          }
+          state.lastActionAt = now;
 
           if (msg.type === 'navigate') {
             const check = await validateUrl(msg.url, config);
