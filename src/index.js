@@ -145,6 +145,8 @@ async function withActiveTab(client, fn) {
   if (!tab) throw new Error('no_active_tab');
   await fn(tab.session.page, tab.session);
   await sendTabs(client);
+  // Small delay helps heavily scripted UIs settle before frame capture.
+  await new Promise(r => setTimeout(r, 35));
   markDirty(client);
 }
 
@@ -220,27 +222,47 @@ async function handleControl(client, msg) {
       await page.reload({ waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs });
     } else if (msg.type === 'click') {
       const p = scalePoint(msg.x, msg.y, msg.vw, msg.vh);
-      // More reliable than a single click call on streamed viewports.
+      // Primary path
       await page.mouse.move(p.x, p.y);
       await page.mouse.down();
       await page.mouse.up();
 
-      // Fallback click dispatch for edge cases in remote streamed mode.
+      // Compatibility path for apps listening to pointer events.
       await page.evaluate(({ x, y }) => {
         const el = document.elementFromPoint(x, y);
         if (!el) return;
-        const evt = new MouseEvent('click', {
+
+        const common = {
           bubbles: true,
           cancelable: true,
           clientX: x,
           clientY: y,
-          view: window
-        });
-        el.dispatchEvent(evt);
+          view: window,
+          pointerId: 1,
+          pointerType: 'mouse',
+          isPrimary: true,
+          button: 0,
+          buttons: 1
+        };
+
+        // Ensure focusable targets are focused before click handlers fire.
+        if (typeof el.focus === 'function') {
+          try { el.focus({ preventScroll: true }); } catch { el.focus(); }
+        }
+
+        try { el.dispatchEvent(new PointerEvent('pointerdown', common)); } catch {}
+        try { el.dispatchEvent(new MouseEvent('mousedown', common)); } catch {}
+        try { el.dispatchEvent(new PointerEvent('pointerup', { ...common, buttons: 0 })); } catch {}
+        try { el.dispatchEvent(new MouseEvent('mouseup', { ...common, buttons: 0 })); } catch {}
+        try { el.dispatchEvent(new MouseEvent('click', { ...common, buttons: 0 })); } catch {}
       }, { x: p.x, y: p.y }).catch(() => {});
     } else if (msg.type === 'scroll') {
       await page.mouse.wheel(Number(msg.dx || 0), Number(msg.dy || 0));
     } else if (msg.type === 'type') {
+      await page.evaluate(() => {
+        const ae = document.activeElement;
+        if (ae && typeof ae.focus === 'function') ae.focus();
+      }).catch(() => {});
       await page.keyboard.type(String(msg.text || ''));
     } else if (msg.type === 'key') {
       const k = String(msg.key || '');
