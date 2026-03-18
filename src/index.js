@@ -228,9 +228,9 @@ async function handleControl(client, msg) {
       await page.mouse.up();
 
       // Compatibility path for apps listening to pointer events.
-      await page.evaluate(({ x, y }) => {
+      const clickOutcome = await page.evaluate(({ x, y }) => {
         const el = document.elementFromPoint(x, y);
-        if (!el) return;
+        if (!el) return { ok: false, reason: 'no_element' };
 
         const common = {
           bubbles: true,
@@ -245,7 +245,6 @@ async function handleControl(client, msg) {
           buttons: 1
         };
 
-        // Ensure focusable targets are focused before click handlers fire.
         if (typeof el.focus === 'function') {
           try { el.focus({ preventScroll: true }); } catch { el.focus(); }
         }
@@ -255,7 +254,32 @@ async function handleControl(client, msg) {
         try { el.dispatchEvent(new PointerEvent('pointerup', { ...common, buttons: 0 })); } catch {}
         try { el.dispatchEvent(new MouseEvent('mouseup', { ...common, buttons: 0 })); } catch {}
         try { el.dispatchEvent(new MouseEvent('click', { ...common, buttons: 0 })); } catch {}
-      }, { x: p.x, y: p.y }).catch(() => {});
+
+        // Robust fallback for link/button UIs.
+        const clickable = el.closest?.('a,button,[role="button"],[onclick]') || el;
+        if (clickable && typeof clickable.click === 'function') {
+          try { clickable.click(); } catch {}
+        }
+
+        const anchor = clickable?.closest?.('a[href]');
+        if (anchor) {
+          const href = anchor.getAttribute('href') || '';
+          const target = (anchor.getAttribute('target') || '').toLowerCase();
+          if (href && target === '_blank') {
+            return { ok: true, popupHref: anchor.href };
+          }
+        }
+
+        return { ok: true };
+      }, { x: p.x, y: p.y }).catch(() => ({ ok: false }));
+
+      // If site tries to open a new tab, force same-tab nav for streamed UX reliability.
+      if (clickOutcome?.popupHref) {
+        const check = await validateUrl(clickOutcome.popupHref, config);
+        if (check.ok) {
+          await page.goto(clickOutcome.popupHref, { waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs }).catch(() => {});
+        }
+      }
     } else if (msg.type === 'scroll') {
       await page.mouse.wheel(Number(msg.dx || 0), Number(msg.dy || 0));
     } else if (msg.type === 'type') {
