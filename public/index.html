@@ -3,33 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>opiabrowser</title>
+  <title>opiabrowser (RBI Simple)</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="window">
-    <div class="tabbar">
-      <div id="tabs" class="tabs"></div>
-      <button id="newTabBtn" class="tabAdd" title="New tab">+</button>
-    </div>
-    <div class="toolbar">
-      <button id="backBtn" title="Back">←</button>
-      <button id="forwardBtn" title="Forward">→</button>
-      <button id="refreshBtn" title="Refresh">↻</button>
-      <span id="security" class="security unknown" title="Connection security">○</span>
-      <input id="urlInput" type="text" value="https://example.com" />
-      <button id="goBtn">Go</button>
-    </div>
-    <div class="subbar">
-      <label><input id="humanMode" type="checkbox" /> Human mode</label>
-      <label>Speed <input id="speed" type="range" min="1" max="5" step="1" value="3" /></label>
-      <span id="speedLabel">normal</span>
-    </div>
-    <div class="meta"><span id="title">No page loaded</span><span id="status">disconnected</span></div>
-    <div class="viewportWrap">
-      <img id="viewport" alt="browser viewport" draggable="false" />
-    </div>
-  </div>
+  <header class="topbar">
+    <button id="backBtn" title="Back">←</button>
+    <button id="forwardBtn" title="Forward">→</button>
+    <button id="refreshBtn" title="Refresh">↻</button>
+    <input id="urlInput" type="text" value="https://google.com" />
+    <button id="goBtn">Go</button>
+    <span id="status" class="status">connecting...</span>
+  </header>
+
+  <main class="viewportWrap">
+    <img id="viewport" alt="isolated browser viewport" draggable="false" />
+  </main>
+
   <script type="module" src="/app.js"></script>
 </body>
 </html>
