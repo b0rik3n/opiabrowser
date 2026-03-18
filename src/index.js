@@ -2,8 +2,14 @@ import express from 'express';
 import helmet from 'helmet';
 import { chromium } from 'playwright';
 import { v4 as uuidv4 } from 'uuid';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { validateUrl } from './security/urlPolicy.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const publicDir = path.resolve(__dirname, '../public');
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -14,12 +20,17 @@ let browser;
 
 function auth(req, res, next) {
   if (!config.apiKey) return next();
+
+  // Allow UI/health without token so local operator can use the control panel.
+  if (req.path === '/' || req.path === '/app.js' || req.path === '/healthz') return next();
+
   const hdr = req.header('authorization') || '';
   if (hdr !== `Bearer ${config.apiKey}`) return res.status(401).json({ error: 'unauthorized' });
   next();
 }
 
 app.use(auth);
+app.use(express.static(publicDir, { index: false }));
 
 function getSession(id) {
   const s = sessions.get(id);
@@ -45,6 +56,7 @@ async function cleanupExpired() {
 
 setInterval(cleanupExpired, 30_000).unref();
 
+app.get('/', (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 app.get('/healthz', (_req, res) => res.json({ ok: true, service: 'opiabrowser' }));
 
 app.post('/session', async (_req, res) => {
