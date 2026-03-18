@@ -1,6 +1,6 @@
 {
   "name": "opiabrowser",
-  "version": "0.1.0",
+  "version": "0.2.0-dev",
   "description": "Secure-by-default sandboxed browser service (Playwright)",
   "type": "module",
   "main": "src/index.js",
@@ -17,6 +17,7 @@
     "express": "^4.19.2",
     "helmet": "^7.1.0",
     "playwright": "^1.58.2",
-    "uuid": "^11.0.3"
+    "uuid": "^11.0.3",
+    "ws": "^8.18.0"
   }
 }
