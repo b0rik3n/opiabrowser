@@ -1,41 +1,47 @@
-# opiabrowser Threat Model (v0.1)
+# opiabrowser Threat Model (v0.2)
 
-## Assets
-- Host machine/network where opiabrowser runs
-- Internal services (localhost, RFC1918, cloud metadata)
-- Session data (page state, cookies, screenshots)
-- API credentials
+## Objective
+Provide safer browsing for high-risk links by isolating browser execution from the host OS.
+
+## Protected Assets
+- Host OS and local user environment
+- Internal network services (localhost, RFC1918, metadata endpoints)
+- Session data generated during isolated browsing
+- API credentials/configuration
 
 ## Trust Boundaries
-1. Client -> opiabrowser API
-2. opiabrowser API -> browser runtime
-3. browser runtime -> external internet
-4. container/process -> host OS
+1. User UI client -> opiabrowser service
+2. opiabrowser service -> isolated browser context
+3. isolated browser context -> external internet
+4. runtime/container boundary -> host OS
 
 ## Primary Threats
-- SSRF into internal services and metadata endpoints
-- Browser escape / sandbox bypass
-- Session hijacking or cross-session leakage
-- Abuse for scanning, phishing automation, or DoS
-- Supply-chain compromise (dependencies, base images)
+- SSRF/internal network probing via loaded pages
+- Browser sandbox escape or runtime compromise
+- Session leakage across users/connections
+- Abuse as a generic automation/scanning proxy
+- Supply-chain compromise (dependencies/base images)
 
-## Controls in v0.1
-- URL policy validation (scheme + host + DNS/IP checks)
-- Block private/link-local/localhost by default
-- Block non-http(s) schemes by default
-- Per-session ephemeral browser contexts
-- Session TTL + max session cap
-- Optional bearer API key
-- Hardened deployment defaults (non-root, read-only fs, no-new-privileges)
+## Security Controls Implemented
+- URL validation with scheme and host/IP checks
+- Private/internal/link-local blocking by default
+- Non-HTTP(S) protocol deny-by-default
+- Ephemeral session lifecycle (destroy on disconnect)
+- Optional API auth for non-local deployment
+- Hardened container guidance (least privilege)
+
+## Out of Scope / Non-Goals
+- Bypassing anti-bot protections
+- Evading access controls or website security policies
+- Offensive automation tooling
 
 ## Residual Risk
-No browser automation service is "vulnerability free". Residual risk remains from:
-- 0day browser/runtime exploits
-- dependency CVEs between patch windows
-- policy bypass edge-cases
+- Browser engine 0day vulnerabilities
+- Third-party dependency CVEs between updates
+- Novel parser/URL-policy bypass techniques
 
-## Ongoing Security Plan
-- Weekly dependency & container image updates
-- CI SAST/dependency scan
-- Security disclosure policy + rapid patch process
-- Add egress proxy layer and CIDR denylist in depth
+## Security Operations Plan
+- Keep browser/runtime dependencies current
+- Track CVEs and publish patch releases quickly
+- Add automated dependency/container scanning in CI
+- Maintain private vulnerability intake and coordinated disclosure
