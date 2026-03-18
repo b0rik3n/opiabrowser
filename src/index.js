@@ -24,9 +24,23 @@ let browser;
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const jitter = (min, max) => Math.floor(min + Math.random() * Math.max(1, max - min + 1));
-async function maybeHumanDelay() {
-  if (config.interactionMode !== 'human') return;
-  await sleep(jitter(config.actionDelayMinMs, config.actionDelayMaxMs));
+
+function speedProfile(speed = 3) {
+  // 1 slower .. 5 faster
+  const table = {
+    1: { min: 220, max: 480, frame: 340, settle: 180, mouseSteps: 12, keyDelay: [70, 130] },
+    2: { min: 150, max: 360, frame: 290, settle: 140, mouseSteps: 10, keyDelay: [55, 110] },
+    3: { min: 110, max: 280, frame: 240, settle: 110, mouseSteps: 8, keyDelay: [35, 95] },
+    4: { min: 70, max: 170, frame: 200, settle: 70, mouseSteps: 5, keyDelay: [20, 55] },
+    5: { min: 0, max: 0, frame: 140, settle: 30, mouseSteps: 2, keyDelay: [0, 10] }
+  };
+  return table[speed] || table[3];
+}
+
+async function maybeHumanDelay(client) {
+  if (!client.mode.human) return;
+  const p = speedProfile(client.mode.speed);
+  await sleep(jitter(p.min, p.max));
 }
 
 function isPublicPath(p) {
@@ -85,7 +99,8 @@ async function newSession() {
 function markDirty(client) {
   client.dirty = true;
   if (!client.frameLoop) {
-    client.frameLoop = setInterval(() => flushFrame(client).catch(() => {}), config.frameIntervalMs);
+    const frameMs = client.mode.human ? speedProfile(client.mode.speed).frame : config.frameIntervalMs;
+    client.frameLoop = setInterval(() => flushFrame(client).catch(() => {}), frameMs);
   }
 }
 
@@ -108,6 +123,13 @@ async function flushFrame(client, force = false) {
 function stopFrameLoop(client) {
   if (client.frameLoop) clearInterval(client.frameLoop);
   client.frameLoop = null;
+}
+
+function applyClientMode(client, { human, speed }) {
+  client.mode.human = Boolean(human);
+  client.mode.speed = Math.max(1, Math.min(5, Number(speed || 3)));
+  stopFrameLoop(client);
+  markDirty(client);
 }
 
 async function sendTabs(client) {
@@ -153,11 +175,12 @@ async function closeTab(client, tabId) {
 async function withActiveTab(client, fn) {
   const tab = client.tabs.get(client.activeTabId);
   if (!tab) throw new Error('no_active_tab');
-  await maybeHumanDelay();
+  await maybeHumanDelay(client);
   await fn(tab.session.page, tab.session);
   await sendTabs(client);
   // Let scripted UIs settle before frame capture.
-  await sleep(config.interactionMode === 'human' ? 110 : 35);
+  const settle = client.mode.human ? speedProfile(client.mode.speed).settle : 35;
+  await sleep(settle);
   markDirty(client);
 }
 
@@ -216,6 +239,11 @@ async function handleControl(client, msg) {
     return;
   }
   if (msg.type === 'closeTab') return closeTab(client, msg.tabId);
+  if (msg.type === 'setMode') {
+    applyClientMode(client, msg);
+    client.ws.send(JSON.stringify({ type: 'status', message: `mode=${client.mode.human ? 'human' : 'fast'} speed=${client.mode.speed}` }));
+    return;
+  }
 
   if (msg.type === 'navigate') {
     const check = await validateUrl(msg.url, config);
@@ -234,10 +262,11 @@ async function handleControl(client, msg) {
     } else if (msg.type === 'click') {
       const p = scalePoint(msg.x, msg.y, msg.vw, msg.vh);
       // Primary path
-      await page.mouse.move(p.x, p.y, { steps: config.interactionMode === 'human' ? 8 : 1 });
-      await maybeHumanDelay();
+      const profile = speedProfile(client.mode.speed);
+      await page.mouse.move(p.x, p.y, { steps: client.mode.human ? profile.mouseSteps : 1 });
+      await maybeHumanDelay(client);
       await page.mouse.down();
-      await maybeHumanDelay();
+      await maybeHumanDelay(client);
       await page.mouse.up();
 
       // Compatibility path for apps listening to pointer events.
@@ -300,8 +329,9 @@ async function handleControl(client, msg) {
         const ae = document.activeElement;
         if (ae && typeof ae.focus === 'function') ae.focus();
       }).catch(() => {});
+      const [kdMin, kdMax] = speedProfile(client.mode.speed).keyDelay;
       await page.keyboard.type(String(msg.text || ''), {
-        delay: config.interactionMode === 'human' ? jitter(35, 95) : 0
+        delay: client.mode.human ? jitter(kdMin, kdMax) : 0
       });
     } else if (msg.type === 'key') {
       const k = String(msg.key || '');
@@ -324,7 +354,14 @@ async function start() {
   const wss = new WebSocketServer({ server, path: '/ws/control' });
 
   wss.on('connection', async (ws, req) => {
-    const client = { ws, tabs: new Map(), activeTabId: null, dirty: false, frameLoop: null };
+    const client = {
+      ws,
+      tabs: new Map(),
+      activeTabId: null,
+      dirty: false,
+      frameLoop: null,
+      mode: { human: config.interactionMode === 'human', speed: 3 }
+    };
     try {
       if (config.apiKey) {
         const u = new URL(req.url, `http://${req.headers.host}`);

@@ -13,6 +13,22 @@ const ws = new WebSocket(wsUrl);
 const tabs = new Map();
 let activeTabId = null;
 
+const humanModeEl = document.getElementById('humanMode');
+const speedEl = document.getElementById('speed');
+const speedLabelEl = document.getElementById('speedLabel');
+const speedMap = { 1: 'very slow', 2: 'slow', 3: 'normal', 4: 'fast', 5: 'very fast' };
+humanModeEl.checked = (localStorage.getItem('opiabrowser_human_mode') || '1') === '1';
+speedEl.value = localStorage.getItem('opiabrowser_speed') || '3';
+speedLabelEl.textContent = speedMap[Number(speedEl.value)] || 'normal';
+
+function sendMode() {
+  const speed = Number(speedEl.value);
+  speedLabelEl.textContent = speedMap[speed] || 'normal';
+  localStorage.setItem('opiabrowser_human_mode', humanModeEl.checked ? '1' : '0');
+  localStorage.setItem('opiabrowser_speed', String(speed));
+  send('setMode', { human: humanModeEl.checked, speed });
+}
+
 function send(type, data = {}) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, ...data }));
 }
@@ -49,6 +65,7 @@ function setSecurity(url) {
 
 ws.addEventListener('open', () => {
   statusEl.textContent = 'connected';
+  sendMode();
 });
 
 ws.addEventListener('message', (evt) => {
@@ -86,6 +103,8 @@ document.getElementById('backBtn').addEventListener('click', () => send('back'))
 document.getElementById('forwardBtn').addEventListener('click', () => send('forward'));
 document.getElementById('refreshBtn').addEventListener('click', () => send('refresh'));
 document.getElementById('newTabBtn').addEventListener('click', () => send('newTab', { url: 'https://example.com' }));
+humanModeEl.addEventListener('change', sendMode);
+speedEl.addEventListener('input', sendMode);
 
 urlInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') send('navigate', { url: urlInput.value.trim() });
