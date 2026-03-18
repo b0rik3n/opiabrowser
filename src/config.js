@@ -18,6 +18,7 @@ export const config = {
   headless: process.env.OPIA_HEADLESS !== 'false',
   viewportWidth: Number(process.env.OPIA_VIEWPORT_WIDTH || 1366),
   viewportHeight: Number(process.env.OPIA_VIEWPORT_HEIGHT || 768),
+  homeUrl: process.env.OPIA_HOME_URL || 'https://example.com',
 
   allowedHosts: (process.env.OPIA_ALLOWED_HOSTS || '')
     .split(',')

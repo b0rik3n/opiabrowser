@@ -119,7 +119,7 @@ async function start() {
         markDirty();
       };
 
-      await state.page.goto('https://google.com', { waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs });
+      await state.page.goto(config.homeUrl, { waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs });
       await flushFrame(true);
       ws.send(JSON.stringify({ type: 'status', message: 'isolated session ready' }));
 
