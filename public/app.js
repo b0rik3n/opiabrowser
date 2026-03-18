@@ -92,6 +92,7 @@ urlInput.addEventListener('keydown', (e) => {
 });
 
 viewport.addEventListener('click', (e) => {
+  e.preventDefault();
   const rect = viewport.getBoundingClientRect();
   send('click', { x: e.clientX - rect.left, y: e.clientY - rect.top, vw: rect.width, vh: rect.height });
 });

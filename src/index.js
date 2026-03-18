@@ -220,7 +220,24 @@ async function handleControl(client, msg) {
       await page.reload({ waitUntil: 'domcontentloaded', timeout: config.navigationTimeoutMs });
     } else if (msg.type === 'click') {
       const p = scalePoint(msg.x, msg.y, msg.vw, msg.vh);
-      await page.mouse.click(p.x, p.y);
+      // More reliable than a single click call on streamed viewports.
+      await page.mouse.move(p.x, p.y);
+      await page.mouse.down();
+      await page.mouse.up();
+
+      // Fallback click dispatch for edge cases in remote streamed mode.
+      await page.evaluate(({ x, y }) => {
+        const el = document.elementFromPoint(x, y);
+        if (!el) return;
+        const evt = new MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          view: window
+        });
+        el.dispatchEvent(evt);
+      }, { x: p.x, y: p.y }).catch(() => {});
     } else if (msg.type === 'scroll') {
       await page.mouse.wheel(Number(msg.dx || 0), Number(msg.dy || 0));
     } else if (msg.type === 'type') {
