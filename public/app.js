@@ -1,100 +1,77 @@
-let sessionId = null;
+const viewport = document.getElementById('viewport');
+const statusEl = document.getElementById('status');
+const titleEl = document.getElementById('title');
+const urlInput = document.getElementById('urlInput');
 
-const $ = (id) => document.getElementById(id);
-const statusEl = $('status');
-const shotEl = $('shot');
+const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+const token = localStorage.getItem('opiabrowser_api_key') || '';
+const wsUrl = `${wsProto}://${location.host}/ws/control${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+const ws = new WebSocket(wsUrl);
 
-function setStatus(msg) {
-  statusEl.textContent = msg;
+function send(type, data = {}) {
+  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, ...data }));
 }
 
-function authHeaders() {
-  const key = $('apiKey').value.trim();
-  const headers = { 'Content-Type': 'application/json' };
-  if (key) headers['Authorization'] = `Bearer ${key}`;
-  return headers;
-}
+ws.addEventListener('open', () => {
+  statusEl.textContent = 'connected';
+});
 
-async function api(path, method = 'GET', body) {
-  const res = await fetch(path, {
-    method,
-    headers: authHeaders(),
-    body: body ? JSON.stringify(body) : undefined
-  });
-
-  const ct = res.headers.get('content-type') || '';
-  if (!res.ok) {
-    const err = ct.includes('application/json') ? await res.json() : await res.text();
-    throw new Error(typeof err === 'string' ? err : JSON.stringify(err));
+ws.addEventListener('message', (evt) => {
+  const msg = JSON.parse(evt.data);
+  if (msg.type === 'frame') {
+    viewport.src = `data:image/png;base64,${msg.data}`;
+    if (msg.url) urlInput.value = msg.url;
+    if (msg.title) titleEl.textContent = msg.title;
   }
-  if (ct.includes('application/json')) return res.json();
-  return res;
-}
+  if (msg.type === 'status') statusEl.textContent = msg.message;
+  if (msg.type === 'error') statusEl.textContent = `error: ${msg.message}`;
+});
 
-async function createSession() {
-  const out = await api('/session', 'POST');
-  sessionId = out.sessionId;
-  $('sessionId').textContent = sessionId;
-  setStatus(`Session created: ${sessionId}`);
-}
+ws.addEventListener('close', () => {
+  statusEl.textContent = 'disconnected';
+});
 
-async function closeSession() {
-  if (!sessionId) return;
-  await api(`/session/${sessionId}`, 'DELETE');
-  sessionId = null;
-  $('sessionId').textContent = 'none';
-  shotEl.removeAttribute('src');
-  setStatus('Session closed');
-}
+document.getElementById('goBtn').addEventListener('click', () => send('navigate', { url: urlInput.value.trim() }));
+document.getElementById('backBtn').addEventListener('click', () => send('back'));
+document.getElementById('forwardBtn').addEventListener('click', () => send('forward'));
+document.getElementById('refreshBtn').addEventListener('click', () => send('refresh'));
+urlInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') send('navigate', { url: urlInput.value.trim() });
+});
 
-async function navigate() {
-  if (!sessionId) throw new Error('Create a session first');
-  const url = $('url').value.trim();
-  const out = await api(`/session/${sessionId}/navigate`, 'POST', { url });
-  setStatus(`Navigated: status=${out.status} final=${out.finalUrl}`);
-}
+viewport.addEventListener('click', (e) => {
+  const rect = viewport.getBoundingClientRect();
+  send('click', { x: e.clientX - rect.left, y: e.clientY - rect.top, vw: rect.width, vh: rect.height });
+});
 
-async function refreshShot() {
-  if (!sessionId) throw new Error('Create a session first');
-  const key = $('apiKey').value.trim();
-  const headers = key ? { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
-  const res = await fetch(`/session/${sessionId}/screenshot`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ fullPage: true })
-  });
-  if (!res.ok) throw new Error(await res.text());
-  const blob = await res.blob();
-  shotEl.src = URL.createObjectURL(blob);
-  setStatus('Screenshot updated');
-}
-
-async function clickSelector() {
-  if (!sessionId) throw new Error('Create a session first');
-  const selector = $('selector').value.trim();
-  await api(`/session/${sessionId}/click`, 'POST', { selector });
-  setStatus(`Clicked: ${selector}`);
-}
-
-async function typeSelector() {
-  if (!sessionId) throw new Error('Create a session first');
-  const selector = $('selector').value.trim();
-  const text = $('text').value;
-  await api(`/session/${sessionId}/type`, 'POST', { selector, text });
-  setStatus(`Typed into: ${selector}`);
-}
-
-async function run(fn) {
-  try {
-    await fn();
-  } catch (e) {
-    setStatus(`Error: ${e.message}`);
+window.addEventListener('keydown', (e) => {
+  const ctrlLike = e.ctrlKey || e.metaKey;
+  if (ctrlLike && e.shiftKey && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    const next = prompt('Set opiabrowser API key (blank to clear):', localStorage.getItem('opiabrowser_api_key') || '');
+    if (next === null) return;
+    if (next.trim()) localStorage.setItem('opiabrowser_api_key', next.trim());
+    else localStorage.removeItem('opiabrowser_api_key');
+    statusEl.textContent = 'API key updated. Reload page.';
+    return;
   }
-}
+  if (ctrlLike && e.key.toLowerCase() === 'l') {
+    e.preventDefault();
+    urlInput.focus();
+    urlInput.select();
+    return;
+  }
+  if (ctrlLike && e.key.toLowerCase() === 'r') {
+    e.preventDefault();
+    send('refresh');
+    return;
+  }
+  if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+  if (e.key.length === 1) send('type', { text: e.key });
+  else send('key', { key: e.key });
+});
 
-$('createBtn').addEventListener('click', () => run(createSession));
-$('closeBtn').addEventListener('click', () => run(closeSession));
-$('goBtn').addEventListener('click', () => run(async () => { await navigate(); await refreshShot(); }));
-$('shotBtn').addEventListener('click', () => run(refreshShot));
-$('clickBtn').addEventListener('click', () => run(async () => { await clickSelector(); await refreshShot(); }));
-$('typeBtn').addEventListener('click', () => run(async () => { await typeSelector(); await refreshShot(); }));
+viewport.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  send('scroll', { dx: e.deltaX, dy: e.deltaY });
+}, { passive: false });

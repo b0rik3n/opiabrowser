@@ -3,54 +3,26 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>opiabrowser Control Panel</title>
-  <style>
-    body { font-family: Inter, system-ui, Arial, sans-serif; margin: 24px; max-width: 1000px; }
-    h1 { margin-bottom: 8px; }
-    .muted { color: #555; margin-top: 0; }
-    .row { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
-    input, button { padding: 8px 10px; font-size: 14px; }
-    input[type=text] { min-width: 280px; }
-    #status { margin: 10px 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    #shot { width: 100%; max-width: 900px; border: 1px solid #ddd; border-radius: 8px; margin-top: 12px; }
-    .panel { border: 1px solid #eee; border-radius: 10px; padding: 14px; margin-top: 16px; }
-    label { font-size: 13px; color: #333; }
-  </style>
+  <title>opiabrowser</title>
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <h1>opiabrowser</h1>
-  <p class="muted">Lightweight browser control panel (v0.2 preview)</p>
-
-  <div class="panel">
-    <div class="row">
-      <label>API Key (optional):</label>
-      <input id="apiKey" type="text" placeholder="Bearer token if enabled" />
+  <div class="window">
+    <div class="tabbar">
+      <div class="tab active">New Tab</div>
     </div>
-    <div class="row">
-      <button id="createBtn">Create Session</button>
-      <button id="closeBtn">Close Session</button>
-      <span>Session: <strong id="sessionId">none</strong></span>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="row">
-      <input id="url" type="text" value="https://example.com" />
+    <div class="toolbar">
+      <button id="backBtn" title="Back">←</button>
+      <button id="forwardBtn" title="Forward">→</button>
+      <button id="refreshBtn" title="Refresh">↻</button>
+      <input id="urlInput" type="text" value="https://example.com" />
       <button id="goBtn">Go</button>
-      <button id="shotBtn">Refresh Screenshot</button>
     </div>
-
-    <div class="row">
-      <input id="selector" type="text" placeholder="selector e.g. input[name=q]" />
-      <input id="text" type="text" placeholder="text to type" />
-      <button id="typeBtn">Type</button>
-      <button id="clickBtn">Click</button>
+    <div class="meta"><span id="title">No page loaded</span><span id="status">disconnected</span></div>
+    <div class="viewportWrap">
+      <img id="viewport" alt="browser viewport" draggable="false" />
     </div>
   </div>
-
-  <div id="status">Ready.</div>
-  <img id="shot" alt="screenshot output" />
-
   <script type="module" src="/app.js"></script>
 </body>
 </html>
