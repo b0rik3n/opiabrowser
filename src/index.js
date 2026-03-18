@@ -18,9 +18,16 @@ app.use(express.json({ limit: '1mb' }));
 app.use(helmet({ contentSecurityPolicy: false }));
 
 const sessions = new Map();
-const VIEW_W = 1280;
-const VIEW_H = 720;
+const VIEW_W = config.viewportWidth;
+const VIEW_H = config.viewportHeight;
 let browser;
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const jitter = (min, max) => Math.floor(min + Math.random() * Math.max(1, max - min + 1));
+async function maybeHumanDelay() {
+  if (config.interactionMode !== 'human') return;
+  await sleep(jitter(config.actionDelayMinMs, config.actionDelayMaxMs));
+}
 
 function isPublicPath(p) {
   return p === '/' || p === '/app.js' || p === '/styles.css' || p === '/healthz';
@@ -55,7 +62,10 @@ async function newSession() {
     acceptDownloads: false,
     ignoreHTTPSErrors: false,
     bypassCSP: false,
-    serviceWorkers: 'block'
+    serviceWorkers: 'block',
+    locale: 'en-US',
+    timezoneId: 'America/New_York',
+    colorScheme: 'light'
   });
 
   const page = await context.newPage();
@@ -75,7 +85,7 @@ async function newSession() {
 function markDirty(client) {
   client.dirty = true;
   if (!client.frameLoop) {
-    client.frameLoop = setInterval(() => flushFrame(client).catch(() => {}), 180);
+    client.frameLoop = setInterval(() => flushFrame(client).catch(() => {}), config.frameIntervalMs);
   }
 }
 
@@ -143,10 +153,11 @@ async function closeTab(client, tabId) {
 async function withActiveTab(client, fn) {
   const tab = client.tabs.get(client.activeTabId);
   if (!tab) throw new Error('no_active_tab');
+  await maybeHumanDelay();
   await fn(tab.session.page, tab.session);
   await sendTabs(client);
-  // Small delay helps heavily scripted UIs settle before frame capture.
-  await new Promise(r => setTimeout(r, 35));
+  // Let scripted UIs settle before frame capture.
+  await sleep(config.interactionMode === 'human' ? 110 : 35);
   markDirty(client);
 }
 
@@ -223,8 +234,10 @@ async function handleControl(client, msg) {
     } else if (msg.type === 'click') {
       const p = scalePoint(msg.x, msg.y, msg.vw, msg.vh);
       // Primary path
-      await page.mouse.move(p.x, p.y);
+      await page.mouse.move(p.x, p.y, { steps: config.interactionMode === 'human' ? 8 : 1 });
+      await maybeHumanDelay();
       await page.mouse.down();
+      await maybeHumanDelay();
       await page.mouse.up();
 
       // Compatibility path for apps listening to pointer events.
@@ -287,7 +300,9 @@ async function handleControl(client, msg) {
         const ae = document.activeElement;
         if (ae && typeof ae.focus === 'function') ae.focus();
       }).catch(() => {});
-      await page.keyboard.type(String(msg.text || ''));
+      await page.keyboard.type(String(msg.text || ''), {
+        delay: config.interactionMode === 'human' ? jitter(35, 95) : 0
+      });
     } else if (msg.type === 'key') {
       const k = String(msg.key || '');
       const map = {
@@ -301,7 +316,7 @@ async function handleControl(client, msg) {
 
 async function start() {
   browser = await chromium.launch({
-    headless: true,
+    headless: config.headless,
     args: ['--disable-background-networking', '--disable-breakpad', '--disable-sync', '--metrics-recording-only', '--no-first-run', '--disable-default-apps']
   });
 
