@@ -1,0 +1,21 @@
+services:
+  opiabrowser:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    ports:
+      - "127.0.0.1:8787:8787"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/opia/.cache
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      OPIA_HOST: 0.0.0.0
+      OPIA_PORT: 8787
+      OPIA_BLOCK_PRIVATE: "true"
+      OPIA_ALLOW_HTTP: "false"
+      OPIA_SESSION_TTL_MS: 300000
